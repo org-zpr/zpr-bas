@@ -31,11 +31,11 @@ use tokio_native_tls::{
     native_tls::{Identity, Protocol, TlsAcceptor as NativeTlsAcceptor},
 };
 
-use openssl::rand::rand_bytes;
-use openssl::pkey::PKey;
-use openssl::sign::Verifier;
 use openssl::hash::MessageDigest;
+use openssl::pkey::PKey;
+use openssl::rand::rand_bytes;
 use openssl::rsa::Padding;
+use openssl::sign::Verifier;
 
 use tracing::{error, info, warn};
 
@@ -473,9 +473,7 @@ async fn authenticate_adapter(
 
                 let pk = PKey::public_key_from_pem(pub_key_pem.as_bytes()).unwrap();
                 let mut verifier = Verifier::new(MessageDigest::sha256(), &pk).unwrap();
-                verifier
-                    .set_rsa_padding(Padding::PKCS1)
-                    .unwrap();
+                verifier.set_rsa_padding(Padding::PKCS1).unwrap();
                 verifier.update(&nonce_buf).unwrap();
                 let maybe_fail = match verifier.verify(&payload_buf) {
                     Ok(true) => {
@@ -483,18 +481,16 @@ async fn authenticate_adapter(
                         None
                     }
                     Ok(false) => {
-                        warn!(
-                            "signature check failed for {}",
-                            &payload.client_id
-                        );
-                        Some(format!("https://auth.zpr?error=invalid_request&error_description=bad+signature"))
+                        warn!("signature check failed for {}", &payload.client_id);
+                        Some(format!(
+                            "https://auth.zpr?error=invalid_request&error_description=bad+signature"
+                        ))
                     }
                     Err(e) => {
-                        error!(
-                            "signature check failed for {}: {}",
-                            &payload.client_id, e
-                        );
-                        Some(format!("https://auth.zpr?error=invalid_request&error_description=internal+error"))
+                        error!("signature check failed for {}: {}", &payload.client_id, e);
+                        Some(format!(
+                            "https://auth.zpr?error=invalid_request&error_description=internal+error"
+                        ))
                     }
                 };
 
@@ -548,10 +544,10 @@ mod tests {
     use super::*;
     use crate::token::claims_for;
     use http_body_util::BodyExt; // for `collect`
+    use openssl::sign::Signer;
     use serde_json::{Value, json};
     use tempfile;
     use tower::ServiceExt;
-    use openssl::sign::Signer;
 
     #[tokio::test]
     async fn test_authrequest_adapter_no_client() {
