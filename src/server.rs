@@ -32,6 +32,10 @@ use tokio_native_tls::{
 };
 
 use openssl::rand::rand_bytes;
+use openssl::pkey::PKey;
+use openssl::sign::Verifier;
+use openssl::hash::MessageDigest;
+use openssl::rsa::Padding;
 
 use tracing::{error, info, warn};
 
@@ -405,12 +409,60 @@ async fn authenticate_adapter(
         vec![]
     });
 
+    let pub_key_pem = match state.db.get_pub_key(&key) {
+        Ok(pem) => pem,
+        Err(e) => {
+            error!("error getting public key for {}: {}", &payload.client_id, e);
+            let resp = Response::builder()
+                .status(StatusCode::FOUND)
+                .header(
+                    "Location",
+                    "https://auth.zpr?error=invalid_request&error_description=key+not+found",
+                )
+                .body(Body::empty())
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let nonce_buf = match BASE64_STANDARD.decode(payload.nonce.as_bytes()) {
+        Ok(buf) => buf,
+        Err(e) => {
+            error!("error decoding nonce for {}: {}", &payload.client_id, e);
+            let resp = Response::builder()
+                .status(StatusCode::FOUND)
+                .header(
+                    "Location",
+                    "https://auth.zpr?error=invalid_request&error_description=bad+nonce",
+                )
+                .body(Body::empty())
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let payload_buf = match BASE64_STANDARD.decode(payload.payload.as_bytes()) {
+        Ok(buf) => buf,
+        Err(e) => {
+            error!("error decoding payload for {}: {}", &payload.client_id, e);
+            let resp = Response::builder()
+                .status(StatusCode::FOUND)
+                .header(
+                    "Location",
+                    "https://auth.zpr?error=invalid_request&error_description=bad+payload",
+                )
+                .body(Body::empty())
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
     let mut token: Option<String> = None;
 
     let location = match state.auths.get_mut(&payload.client_id) {
         Some(rec) => {
             info!("token request for {}", &payload.client_id);
-            if (!rec.nonce.is_empty()) && rec.nonce != payload.nonce {
+            if rec.nonce.is_empty() || rec.nonce != payload.nonce {
                 warn!(
                     "authenticate_adapter for {} but nonce does not match",
                     &payload.client_id
@@ -419,19 +471,47 @@ async fn authenticate_adapter(
             } else {
                 // client_id and nonce are known to us, so we can check the signature
 
-                // TODO: Use the FsDb to load up the public key for this client_id (the CN)
-                //       and check the signature.
-                info!("faking signature check success for {}", &payload.client_id);
+                let pk = PKey::public_key_from_pem(pub_key_pem.as_bytes()).unwrap();
+                let mut verifier = Verifier::new(MessageDigest::sha256(), &pk).unwrap();
+                verifier
+                    .set_rsa_padding(Padding::PKCS1)
+                    .unwrap();
+                verifier.update(&nonce_buf).unwrap();
+                let maybe_fail = match verifier.verify(&payload_buf) {
+                    Ok(true) => {
+                        info!("signature check success for {}", &payload.client_id);
+                        None
+                    }
+                    Ok(false) => {
+                        warn!(
+                            "signature check failed for {}",
+                            &payload.client_id
+                        );
+                        Some(format!("https://auth.zpr?error=invalid_request&error_description=bad+signature"))
+                    }
+                    Err(e) => {
+                        error!(
+                            "signature check failed for {}: {}",
+                            &payload.client_id, e
+                        );
+                        Some(format!("https://auth.zpr?error=invalid_request&error_description=internal+error"))
+                    }
+                };
 
+                // Clear nonce which means that client must re-start auth process regardless of outcome here.
                 rec.nonce.clear();
-                // The code is secret and only for one time use and should be kept in memory only.
-                let code = create_authorization_code();
-                let tok = create_token(&payload.client_id, &attrs);
-                rec.token = Some(tok.clone());
-                token = Some(tok);
-                rec.code = Some(format!("{code}"));
 
-                format!("https://auth.zpr?code={}", code)
+                if let Some(fail_uri) = maybe_fail {
+                    fail_uri
+                } else {
+                    // The code is secret and only for one time use and should be kept in memory only.
+                    let code = create_authorization_code();
+                    let tok = create_token(&payload.client_id, &attrs);
+                    rec.token = Some(tok.clone());
+                    token = Some(tok);
+                    rec.code = Some(format!("{code}"));
+                    format!("https://auth.zpr?code={}", code)
+                }
             }
         }
         None => {
@@ -471,6 +551,7 @@ mod tests {
     use serde_json::{Value, json};
     use tempfile;
     use tower::ServiceExt;
+    use openssl::sign::Signer;
 
     #[tokio::test]
     async fn test_authrequest_adapter_no_client() {
@@ -645,6 +726,19 @@ mod tests {
             assert!(!nonce.is_empty());
         }
 
+        // ======= sign the nonce, creating the payload
+        let payload: String;
+        {
+            let priv_key_pem = db.get_private_key(&key).unwrap();
+            let priv_key = PKey::private_key_from_pem(priv_key_pem.as_bytes()).unwrap();
+            let mut signer = Signer::new(MessageDigest::sha256(), &priv_key).unwrap();
+            signer.set_rsa_padding(Padding::PKCS1).unwrap();
+            let nonce_buf = BASE64_STANDARD.decode(nonce.as_bytes()).unwrap();
+            signer.update(&nonce_buf).unwrap();
+            let signature = signer.sign_to_vec().unwrap();
+            payload = BASE64_STANDARD.encode(&signature);
+        }
+
         // ======= call authorize with the nonce to get an access code
         let mut code: Option<String> = None;
         {
@@ -659,7 +753,7 @@ mod tests {
                             serde_json::to_vec(&json!({
                                 "client_id": "foo.bar",
                                 "nonce": nonce.clone(),
-                                "payload": "payload"
+                                "payload": payload,
                             }))
                             .unwrap(),
                         ))
@@ -676,7 +770,7 @@ mod tests {
                 .get("Location")
                 .map(|h| h.to_str().unwrap())
                 .map(|l| {
-                    assert!(l.contains("code="));
+                    assert!(l.contains("code="), "unexpected location header: {}", l);
                     let cs = l.split("code=").nth(1).unwrap();
                     assert!(!cs.is_empty());
                     code = Some(cs.to_string());
