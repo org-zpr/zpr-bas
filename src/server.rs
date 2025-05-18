@@ -178,7 +178,7 @@ async fn start_vs_server(acceptor: NativeTlsAcceptor, port: u16, state: SharedSt
 async fn start_tls_server(desc: &str, app: Router, acceptor: NativeTlsAcceptor, port: u16) {
     // TODO: refresh
     let tls_acceptor = TlsAcceptor::from(acceptor);
-    let bind = format!("[::1]:{port}"); // TODO:  we don't want to just bind to localhost
+    let bind = format!("[::]:{port}"); // TODO: tell server what interface to bind to
     let tcp_listener = TcpListener::bind(bind.clone()).await.unwrap();
     info!("{desc} listening on {bind} (TLS)");
 
