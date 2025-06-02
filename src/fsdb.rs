@@ -190,6 +190,21 @@ impl FsDb {
         Ok(public_key)
     }
 
+    #[allow(dead_code)]
+    pub fn get_private_key(&self, cn: &CnKey) -> Result<String, FsDbError> {
+        let actor_path = self.root.join(format!("cn.{cn}"));
+        let private_key_path = actor_path.join("private.pem");
+        if !private_key_path.exists() {
+            return Err(FsDbError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("private key for {} not found", cn),
+            )));
+        }
+        let private_key_data = std::fs::read(private_key_path)?;
+        let private_key = String::from_utf8(private_key_data)?;
+        Ok(private_key)
+    }
+
     /// Add a token to the actors directory. Note this is MUT to avoid adding these
     /// in multiple threads at the same time (since we count the number of tokens
     /// already in the directory to come up with the file name).
