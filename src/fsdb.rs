@@ -58,6 +58,10 @@ impl CnKey {
         }
         Ok(CnKey(clean))
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Since we use CN as part of a file name, we restrict it pretty substantially here

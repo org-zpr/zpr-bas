@@ -8,6 +8,7 @@ use tracing_subscriber;
 
 use fsdb::{CnKey, FsDb};
 use server::start_server;
+use token::create_token;
 
 const DEFAULT_DB_PATH: &str = "./db";
 
@@ -37,6 +38,9 @@ enum CliCommand {
 
     /// Start the authentication server.
     Serve(ServeArgs),
+
+    /// Generate a token
+    Gentok(GentokArgs),
 }
 
 #[derive(Args)]
@@ -88,6 +92,12 @@ struct ServeArgs {
     /// Path to the TLS certificate file
     #[arg(long, short)]
     cert: PathBuf,
+}
+
+#[derive(Args)]
+struct GentokArgs {
+    /// CN of the actor to generate a token for (must exist in db)
+    cn: String,
 }
 
 fn main() {
@@ -157,6 +167,23 @@ fn main() {
             rt.block_on(async {
                 start_server(&args.key, &args.cert, init_db(Path::new(DEFAULT_DB_PATH))).await;
             });
+        }
+        Some(CliCommand::Gentok(args)) => {
+            let db = init_db(Path::new(DEFAULT_DB_PATH));
+            let key = CnKey::from_str(&args.cn).unwrap_or_else(|e| {
+                eprintln!("Error parsing CN: {}", e);
+                std::process::exit(1);
+            });
+            match db.get_attributes(&key) {
+                Ok(attrs) => {
+                    let tok = create_token(key.as_str(), &attrs);
+                    println!("{tok}");
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         None => {
             println!("No command provided. Use --help for more information.");
