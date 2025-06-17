@@ -5,7 +5,6 @@ use hmac::{Hmac, Mac};
 use jwt::{AlgorithmType, Claims, Header, SignWithKey, Token};
 use serde_json::json;
 use sha2::Sha384;
-use uuid::Uuid;
 
 pub const JWT_LIFETIME_SECONDS: u64 = 86400; // 24 hours
 
@@ -29,7 +28,6 @@ pub fn create_token(client_id: &str, attributes: &Vec<(String, String)>) -> Stri
     );
     token_claims.registered.issuer = Some("zpr/bas".to_string());
     token_claims.registered.audience = Some("zpr".to_string());
-    token_claims.registered.json_web_token_id = Some(Uuid::new_v4().to_string());
 
     // All the attributes are stored as "z/<name>" in the private claims.
     // TODO: An improvement would be to put all the tags in a single attribute, say "ztags".
@@ -126,16 +124,5 @@ mod test {
         assert_eq!(claims.get("aud").unwrap(), "zpr");
         assert_eq!(claims.get("iss").unwrap(), "zpr/bas");
         assert_eq!(claims.get("z/key1").unwrap(), "value1");
-    }
-
-    #[test]
-    fn test_sets_jti() {
-        let client_id = "test_client_id";
-        let attributes = vec![("key1".to_string(), "value1".to_string())];
-
-        let token = create_token(client_id, &attributes);
-        let claims = claims_for(&token).unwrap();
-
-        assert!(!claims.get("jti").unwrap().is_empty());
     }
 }

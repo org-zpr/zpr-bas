@@ -72,7 +72,7 @@ struct AuthRecord {
     nonce: String, // base64 encoded bytes
     created: time::Instant,
     code: Option<String>,
-    token: Option<String>,
+    token: Option<String>, // TODO: JWT
 }
 
 type SharedState = Arc<RwLock<AppState>>;

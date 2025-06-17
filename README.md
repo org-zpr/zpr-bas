@@ -47,13 +47,7 @@ date: Thu, 17 Apr 2025 15:30:11 GMT
 {"nonce":"lta7gNo3sfCwvJaazs2r9+4F6FNCt0BcYMhGaVndLQn+3cMdGCdT/qo5FTZErfnwAc+leub2qfKPZQ0qDIi8xg=="}
 ```
 
-When a client adapter gets this message, it will use the nonce to create a `payload` to send
-back in order to verify that the adapter holds the correct private key.  The payload is just
-the RSA signature (sha256, PKCS1) of the nonce.
-
-In the call below the payload is set to `fake`.  If you want the example to work you need to
-compute a real payload as described.  The `Response` below is an example of a successful
-response which you definately will not get if you pass `fake` for your payload value.
+Since the service does not yet actually check the signed payload, we can respond with a garbage `payload`.
 
     curl -d '{"client_id":"mk.zpr","nonce":"lta7gNo3sfCwvJaazs2r9+4F6FNCt0BcYMhGaVndLQn+3cMdGCdT/qo5FTZErfnwAc+leub2qfKPZQ0qDIi8xg==","payload":"fake"}' \
       -ik -H "Content-Type: application/json" \
@@ -69,8 +63,8 @@ date: Thu, 17 Apr 2025 15:31:05 GMT
 ```
 
 Normally the adapter would now create the "BLOB" (including the `code` returned above) and
-send it to the visa service for processing.  The visa service then calls the `/token`
-endpoint to get the authorization token (a JWT token).
+send it to the visa service for processing.  The visa service would then call the `/token`
+endpoint to get the authorization token
 
 So here we act like the visa service:
 
@@ -87,41 +81,5 @@ content-length: 403
 date: Thu, 17 Apr 2025 15:34:17 GMT
 
 {"access_token":"eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJ6cHIiLCJleHAiOiIxNzQ0OTkwMjY1IiwiaWF0IjoiMTc0NDkwMzg2NSIsImlzcyI6Inpwci9iYXMiLCJzdWIiOiJtay56cHIiLCJ6cHJhL2NvbG9yIjoiZ3JlZW4iLCJ6cHJhL2dyb3VwcyI6Im1hcmtldGluZyxmaW5hbmNlIiwienByYS9tYW5hZ2VyIjoiIn0.jiKfmi_aQdfb-y5WiJL27fOzViHPOef0pLzGtWXyGs8UN0l4jR9kYULYQCPHBBFI","token_type":"bearer","expires_in":3600,"refresh_token":null,"error":null}
-
-```
-
-## The JWT Tokens
-
-The payload of the JWT includes the following registered claims:
-
-|CLAIM| EXPLANATION             |
-|-----|-------------------------|
-| iss | Always set to `zpr|bas` |
-| sub | Set to the CN value     |
-| aud | Always set to `zpr`     |
-| iat | Token issue time        |
-| exp | Token expiration time   |
-| jti | A UUID                  |
-
-
-The time values are seconds since the unix epoch.
-
-In addition to the claims above, addition attributes are returned to zpr using
-arbitrary claims that start with the prefix **z/**.  So in the example below
-there are two attributes: `bas_id` and `color`.
-
-
-```json
-{
-  "iss": "zpr/bas",
-  "sub": "cli.zpr.org",
-  "aud": "zpr",
-  "exp": 1749763972,
-  "iat": 1749677572,
-  "jti": "6ae961e3-87ec-4fca-836a-8e2f5bff0838"
-  "z/bas_id": "5678",
-  "z/color": "red"
-}
-
 
 ```
