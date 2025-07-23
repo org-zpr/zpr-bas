@@ -39,6 +39,11 @@ use openssl::sign::Verifier;
 
 use tracing::{error, info, warn};
 
+pub mod targets {
+    pub const ADAPTER: &str = "adapter";
+    pub const VISASVC: &str = "vs";
+}
+
 /// Sent from the auth service to the adapter. This is the "challenge" part of the
 /// authentication protocol. The adapter will use the nonce in a signed message.
 #[derive(Debug, Serialize, Default)]
@@ -246,10 +251,10 @@ async fn tokenrequest_vs(
     let resp = match auths.get_mut(&input.client_id) {
         Some(rec) => {
             if rec.code.is_none() || rec.code != Some(input.code.clone()) {
-                warn!("tokenrequest for {} but code is invalid", &input.client_id);
+                warn!(target: targets::VISASVC, "tokenrequest for {} but code is invalid", &input.client_id);
                 AccessTokenResponse::err("invalid_client")
             } else if rec.token.is_none() {
-                warn!("tokenrequest for {} but no token found", &input.client_id);
+                warn!(target: targets::VISASVC, "tokenrequest for {} but no token found", &input.client_id);
                 AccessTokenResponse::err("invalid_client")
             } else {
                 // Code matches, and we have token.
@@ -263,12 +268,12 @@ async fn tokenrequest_vs(
 
                 // At this point we can remove memory of the auth event.
                 auths.remove(&input.client_id);
-                info!("tokenrequest for {} succeeds", &input.client_id);
+                info!(target: targets::VISASVC, "tokenrequest for {} succeeds", &input.client_id);
                 resp
             }
         }
         None => {
-            warn!("tokenrequest for unknown client_id: {}", &input.client_id);
+            warn!(target: targets::VISASVC, "tokenrequest for unknown client_id: {}", &input.client_id);
             AccessTokenResponse::err("invalid_client")
         }
     };
@@ -313,10 +318,11 @@ async fn authrequest_adapter(
     State(state): State<SharedState>,
     Form(input): Form<AuthRequestInput>,
 ) -> (StatusCode, Json<AdapterAuthRequest>) {
-    info!("authrequest for {}", input.client_id);
+    info!(target: targets::ADAPTER, "authrequest for {}", input.client_id);
 
     if input.response_type != "code" {
         warn!(
+            target: targets::ADAPTER,
             "authrequest for {} has invalid response_type {}",
             input.client_id, input.response_type
         );
@@ -328,15 +334,12 @@ async fn authrequest_adapter(
 
     let state = &mut state.write().unwrap();
     let Ok(key) = CnKey::from_str(&input.client_id) else {
-        error!("error parsing client_id {}", &input.client_id);
+        error!(target: targets::ADAPTER, "error parsing client_id {}", &input.client_id);
         return (StatusCode::BAD_REQUEST, Json(AdapterAuthRequest::default()));
     };
 
     if !state.db.actor_exists(&key) {
-        warn!(
-            "authrequest for {} but client_id not in database",
-            &input.client_id
-        );
+        warn!(target: targets::ADAPTER, "authrequest for {} but client_id not in database", &input.client_id);
         return (
             StatusCode::UNAUTHORIZED,
             Json(AdapterAuthRequest::default()),
@@ -345,12 +348,9 @@ async fn authrequest_adapter(
 
     if let Some(rec) = state.auths.get(&input.client_id) {
         if rec.code.is_none() {
-            warn!(
-                "authrequest for {} but auth already in progress, previous is now invalid",
-                &input.client_id
-            );
+            warn!(target: targets::ADAPTER, "authrequest for {} but auth already in progress, previous is now invalid", &input.client_id);
         } else {
-            info!("new authrequest for {}", &input.client_id);
+            info!(target: targets::ADAPTER, "new authrequest for {}", &input.client_id);
         }
     }
 
@@ -391,7 +391,7 @@ async fn authenticate_adapter(
     let state = &mut state.write().unwrap();
 
     let Ok(key) = CnKey::from_str(&payload.client_id) else {
-        error!("error parsing client_id {}", &payload.client_id);
+        error!(target: targets::ADAPTER, "error parsing client_id {}", &payload.client_id);
         let resp = Response::builder()
             .status(StatusCode::FOUND)
             .header(
@@ -404,7 +404,7 @@ async fn authenticate_adapter(
     };
 
     let attrs = state.db.get_attributes(&key).unwrap_or_else(|e| {
-        error!("error getting attributes for {}: {}", &payload.client_id, e);
+        error!(target: targets::ADAPTER, "error getting attributes for {}: {}", &payload.client_id, e);
         // Just skip them in this case.
         vec![]
     });
@@ -412,7 +412,7 @@ async fn authenticate_adapter(
     let pub_key_pem = match state.db.get_pub_key(&key) {
         Ok(pem) => pem,
         Err(e) => {
-            error!("error getting public key for {}: {}", &payload.client_id, e);
+            error!(target: targets::ADAPTER, "error getting public key for {}: {}", &payload.client_id, e);
             let resp = Response::builder()
                 .status(StatusCode::FOUND)
                 .header(
@@ -428,7 +428,7 @@ async fn authenticate_adapter(
     let nonce_buf = match BASE64_STANDARD.decode(payload.nonce.as_bytes()) {
         Ok(buf) => buf,
         Err(e) => {
-            error!("error decoding nonce for {}: {}", &payload.client_id, e);
+            error!(target: targets::ADAPTER, "error decoding nonce for {}: {}", &payload.client_id, e);
             let resp = Response::builder()
                 .status(StatusCode::FOUND)
                 .header(
@@ -444,7 +444,7 @@ async fn authenticate_adapter(
     let payload_buf = match BASE64_STANDARD.decode(payload.payload.as_bytes()) {
         Ok(buf) => buf,
         Err(e) => {
-            error!("error decoding payload for {}: {}", &payload.client_id, e);
+            error!(target: targets::ADAPTER, "error decoding payload for {}: {}", &payload.client_id, e);
             let resp = Response::builder()
                 .status(StatusCode::FOUND)
                 .header(
@@ -461,12 +461,9 @@ async fn authenticate_adapter(
 
     let location = match state.auths.get_mut(&payload.client_id) {
         Some(rec) => {
-            info!("token request for {}", &payload.client_id);
+            info!(target: targets::ADAPTER, "token request for {}", &payload.client_id);
             if rec.nonce.is_empty() || rec.nonce != payload.nonce {
-                warn!(
-                    "authenticate_adapter for {} but nonce does not match",
-                    &payload.client_id
-                );
+                warn!(target: targets::ADAPTER, "authenticate_adapter for {} but nonce does not match", &payload.client_id);
                 format!("https://auth.zpr?error=invalid_request&error_description=bad+nonce")
             } else {
                 // client_id and nonce are known to us, so we can check the signature
@@ -477,17 +474,17 @@ async fn authenticate_adapter(
                 verifier.update(&nonce_buf).unwrap();
                 let maybe_fail = match verifier.verify(&payload_buf) {
                     Ok(true) => {
-                        info!("signature check success for {}", &payload.client_id);
+                        info!(target: targets::ADAPTER, "signature check success for {}", &payload.client_id);
                         None
                     }
                     Ok(false) => {
-                        warn!("signature check failed for {}", &payload.client_id);
+                        warn!(target: targets::ADAPTER, "signature check failed for {}", &payload.client_id);
                         Some(format!(
                             "https://auth.zpr?error=invalid_request&error_description=bad+signature"
                         ))
                     }
                     Err(e) => {
-                        error!("signature check failed for {}: {}", &payload.client_id, e);
+                        error!(target: targets::ADAPTER, "signature check failed for {}: {}", &payload.client_id, e);
                         Some(format!(
                             "https://auth.zpr?error=invalid_request&error_description=internal+error"
                         ))
@@ -511,10 +508,7 @@ async fn authenticate_adapter(
             }
         }
         None => {
-            warn!(
-                "authenticate_adapter for {} but no auth in progress",
-                &payload.client_id
-            );
+            warn!(target: targets::ADAPTER, "authenticate_adapter for {} but no auth in progress", &payload.client_id);
             format!("https://auth.zpr?error=invalid_request&error_description=not+started") // TODO
         }
     };
